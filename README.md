@@ -1,4 +1,4 @@
-# assign-for-react
-assign-for-react
-解决react assign的问题。
-更新某个对象的某个字段的时候，尤其是深层对象，会让代码变得很难维护，尝试写一个assign，只需要声明你需要修改的字段和值即可。工具会返回一个新的对象，但是会共享不需要修改的字段的值。只修改你声明的字段的值，从声明字段所在的对象到根节点这条路径上的对象都是新的。
+
+try to solve the problem of react assign.
+
+in react, when updating a field of an object, especially a deep object, it will make the code difficult to maintain. Try to write an assign tool, you just need to declare the fields and values that need to be modified. The tool will returns a new object, but shares the values of fields that do not need to be modified. Only modify the value of the field you declare, and from the object where the field is declared to the object on the path to the root will be modified.
