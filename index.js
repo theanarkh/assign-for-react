@@ -1,31 +1,39 @@
 
+var map;
 function type(value) {
     return Object.prototype.toString.call(value).replace(/\[object (.+)\]/, '$1');
 }
 
-function _assign(obj, queue, value) {
-
+function _assign(obj, k) {
+    
     // primitive value
-    if (type(obj) !== 'Array' && type(obj) !== 'Object') {
+    if (!map.has(obj) || type(obj) !== 'Array' && type(obj) !== 'Object') {
         return obj;
     }
-    // can be shared, return directly
-    if (!queue || !queue.includes(obj)) {
-        return obj;
-    }
-    // shift a path
-    queue && queue.length && queue.shift();
+
     // need a new object or array because it can not be shared;
-    const ret = type(obj) === 'Array' ? [] : {};
-    // empty mean we get the end of path
-    let empty = queue && !queue.length;
+    let ret = type(obj) === 'Array' ? [] : {};
     // clone
     for(var [k,v] of Object.entries(obj)) {
-        ret[k] = _assign(v, queue && queue.length ? queue : null, value);
+        ret[k] = _assign(v, k);
+        const queue = map.get(obj).queue;
+        while(queue.length) {
+            const node = queue.shift();
+            if (node.action == 'replace') {
+                ret = node.data;
+            } else if (node.action == 'merge') {
+                if (type(obj) === 'Object' && type(node.data) === 'Object') {
+                    Object.assign(ret, node.data);
+                }
+                if (type(obj) === 'Array' && type(node.data) === 'Array') {
+                    for(var [k,v] of Object.entries(node.data)) {
+                        ret[k] = v;
+                    }
+                }
+            }
+        }
     }
-    if (empty) {
-        Object.assign(ret, value);
-    }
+    
     return ret;
 }
 
@@ -55,11 +63,11 @@ function parsePath(path) {
         switch(status) {
             case state.parsingArrayName: 
                 
-                if (path[i] != '[' || !/\[\d+\]/.test(path.slice(i))) {
+                if (path[i] != '[' || !/^\[\d+\]/.test(path.slice(i))) {
                     arrayName += path[i];
                 } else {
-                   arrayName && indexs.push(arrayName)
-                   status =  state.parsingArrayIndex;
+                    arrayName && indexs.push(arrayName)
+                    status =  state.parsingArrayIndex;
                 }
                 break;
             case state.parsingArrayIndex:
@@ -94,47 +102,94 @@ function parsePath(path) {
 }
 
 // find the node then can not be shared;store in queue;
-function findNodes(obj, paths) {
-    let current = obj;
-    let queue = [obj];
-    let path;
-    do {
-        try {
-            path = parsePath(paths.shift());
-            if (path.type === 'arrayIndex') {
-                do {
-                    current = current[path.indexs.shift()];
-                    queue.push(current);
-                } while(path.indexs.length);
-            } else {
-                current = current[path.value];
-                queue.push(current);
-            }
-            
-        } catch(e) {
-            throw new Error(e);
+function findNodes(obj, configs) {
+
+    for (let i = 0; i < configs.length; i++) {
+        const config = configs[i];
+        let { path, action, data } = config;
+
+        let current = obj;
+        // split the string path to array
+        const paths = path.split(/\s*\.\s*/).filter((path) => {
+            return !/^\s*$/.test(path);
+        });
+        if (!map.has(current)) {
+            map.set(current, {queue: []});
         }
-    } while(paths.length);
-    return queue;
+        if (!paths.length) {
+            map.get(current).queue.push(config);
+            break;
+        }
+        do {
+            try {
+                // parse one path
+                path = parsePath(paths.shift());
+                if (path.type === 'arrayIndex') {
+                    do {
+                        const index = path.indexs.shift();
+                        const prev = current;
+                        current = current[index];
+                        if (type(current) !== 'Object' && type(current) !== 'Array') {
+                            current = prev;
+                        }
+                        if (!map.has(current)) {
+                            map.set(current, {queue: []});
+                        }
+                        if (!paths.length) {
+                            if (current === prev) {
+                                map.get(current).queue.push({...config, data: {[index]: config.data}});
+                            } else {
+                                map.get(current).queue.push(config);
+                            }
+                            
+                        }
+                    } while(path.indexs.length);
+                } else {
+                    const key = path.value;
+                    const prev = current;
+                    current = current[key];
+                    if (type(current) !== 'Object' && type(current) !== 'Array') {
+                        current = prev;
+                    }
+                    if (!map.has(current)) {
+                        map.set(current, {queue: []});
+                    }
+                    if (!paths.length) {
+                        if (current === prev) {
+                            map.get(current).queue.push({...config, data: {[key]: config.data}});
+                        } else {
+                            map.get(current).queue.push(config);
+                        }
+                        
+                    }
+                }
+                
+            } catch(e) {
+                throw new Error(e);
+            }
+        } while(paths.length);
+    }
+
+
 }
 
-exports.assign = function assign(obj, path, value = {}) {
+/*
+     obj => source object
+     path => the char follow with "." mean object key,the number in "[]" mean array index.(a.x | a[1])
+     value => when find the node by path,value will be merged into the node
+ */
+function assign(obj, configs) {
 
-    if (type(value) !== 'Object' || (type(obj) !== 'Object' && type(obj) !== 'Array')) {
-        return obj;
+    if ((type(obj) !== 'Object' && type(obj) !== 'Array')) {
+        return value;
     }
-    // split the string path to array
-    const paths = path.split(/\s*\.\s*/).filter((path) => {
-        return !/^\s*$/.test(path);
-    });
-
-    // have no path return new object;
-    if (!paths.length) {
-        return {...obj, ...value};
+    map = new Map();
+    // have no path return a new object or value;
+    if (!configs.length) {
+        return type(obj) === 'Object' ? {...obj} : [...obj];
     }
-
-    const queue = findNodes(obj, paths);
-
-    return _assign(obj, queue, value);
+    findNodes(obj, configs);
+    // build new obj
+    return _assign(obj);
 
 }
